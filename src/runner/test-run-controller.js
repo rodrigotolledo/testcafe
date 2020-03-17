@@ -7,23 +7,23 @@ const QUARANTINE_THRESHOLD = 3;
 const DISCONNECT_THRESHOLD = 3;
 
 class Quarantine {
-    constructor () {
+    constructor() {
         this.attempts = [];
     }
 
-    getFailedAttempts () {
+    getFailedAttempts() {
         return this.attempts.filter(errors => !!errors.length);
     }
 
-    getPassedAttempts () {
+    getPassedAttempts() {
         return this.attempts.filter(errors => errors.length === 0);
     }
 
-    getNextAttemptNumber () {
+    getNextAttemptNumber() {
         return this.attempts.length + 1;
     }
 
-    isThresholdReached (extraErrors) {
+    isThresholdReached(extraErrors) {
         const { failedTimes, passedTimes } = this._getAttemptsResult(extraErrors);
 
         const failedThresholdReached = failedTimes >= QUARANTINE_THRESHOLD;
@@ -32,13 +32,13 @@ class Quarantine {
         return failedThresholdReached || passedThresholdReached;
     }
 
-    isFirstAttemptSuccessful (extraErrors) {
+    isFirstAttemptSuccessful(extraErrors) {
         const { failedTimes, passedTimes } = this._getAttemptsResult(extraErrors);
 
         return failedTimes === 0 && passedTimes > 0;
     }
 
-    _getAttemptsResult (extraErrors) {
+    _getAttemptsResult(extraErrors) {
         let failedTimes = this.getFailedAttempts().length;
         let passedTimes = this.getPassedAttempts().length;
 
@@ -54,39 +54,39 @@ class Quarantine {
 }
 
 export default class TestRunController extends AsyncEventEmitter {
-    constructor (test, index, proxy, screenshots, warningLog, fixtureHookController, opts) {
+    constructor(test, index, proxy, screenshots, warningLog, fixtureHookController, opts) {
         super();
 
-        this.test  = test;
+        this.test = test;
         this.index = index;
-        this.opts  = opts;
+        this.opts = opts;
 
-        this.proxy                 = proxy;
-        this.screenshots           = screenshots;
-        this.warningLog            = warningLog;
+        this.proxy = proxy;
+        this.screenshots = screenshots;
+        this.warningLog = warningLog;
         this.fixtureHookController = fixtureHookController;
 
         this.TestRunCtor = TestRunController._getTestRunCtor(test, opts);
 
-        this.testRun            = null;
-        this.done               = false;
-        this.quarantine         = null;
+        this.testRun = null;
+        this.done = false;
+        this.quarantine = null;
         this.disconnectionCount = 0;
 
         if (this.opts.quarantineMode)
             this.quarantine = new Quarantine();
     }
 
-    static _getTestRunCtor (test, opts) {
+    static _getTestRunCtor(test, opts) {
         if (opts.TestRunCtor)
             return opts.TestRunCtor;
 
         return test.isLegacy ? LegacyTestRun : TestRun;
     }
 
-    async _createTestRun (connection) {
+    async _createTestRun(connection) {
         const screenshotCapturer = this.screenshots.createCapturerFor(this.test, this.index, this.quarantine, connection, this.warningLog);
-        const TestRunCtor        = this.TestRunCtor;
+        const TestRunCtor = this.TestRunCtor;
 
         this.testRun = new TestRunCtor(this.test, connection, screenshotCapturer, this.warningLog, this.opts);
 
@@ -95,10 +95,10 @@ export default class TestRunController extends AsyncEventEmitter {
 
         if (!this.quarantine || this._isFirstQuarantineAttempt()) {
             await this.emit('test-run-create', {
-                testRun:    this.testRun,
-                legacy:     TestRunCtor === LegacyTestRun,
-                test:       this.test,
-                index:      this.index,
+                testRun: this.testRun,
+                legacy: TestRunCtor === LegacyTestRun,
+                test: this.test,
+                index: this.index,
                 quarantine: this.quarantine,
             });
         }
@@ -106,59 +106,64 @@ export default class TestRunController extends AsyncEventEmitter {
         return this.testRun;
     }
 
-    async _endQuarantine () {
+    async _endQuarantine() {
         if (this.quarantine.attempts.length > 1)
             this.testRun.unstable = this.quarantine.getPassedAttempts().length > 0;
 
         await this._emitTestRunDone();
     }
 
-    _shouldKeepInQuarantine () {
-        const errors         = this.testRun.errs;
-        const hasErrors      = !!errors.length;
-        const attempts       = this.quarantine.attempts;
+    _shouldKeepInQuarantine() {
+        const errors = this.testRun.errs;
+        const hasErrors = !!errors.length;
+        const attempts = this.quarantine.attempts;
         const isFirstAttempt = this._isFirstQuarantineAttempt();
 
         attempts.push(errors);
 
+        // finish successfully here if there is at least 1 successful run
+        if (errors.length == 0 && hasErrors == false && attempts > 0 && isFirstAttempt == false) {
+            await this._endQuarantine();
+        }
+
         return isFirstAttempt ? hasErrors : !this.quarantine.isThresholdReached();
     }
 
-    _isFirstQuarantineAttempt () {
+    _isFirstQuarantineAttempt() {
         return this.quarantine && !this.quarantine.attempts.length;
     }
 
-    async _keepInQuarantine () {
+    async _keepInQuarantine() {
         await this._restartTest();
     }
 
-    async _restartTest () {
+    async _restartTest() {
         await this.emit('test-run-restart');
     }
 
-    async _testRunDoneInQuarantineMode () {
+    async _testRunDoneInQuarantineMode() {
         if (this._shouldKeepInQuarantine())
             await this._keepInQuarantine();
         else
             await this._endQuarantine();
     }
 
-    async _testRunDone () {
+    async _testRunDone() {
         if (this.quarantine)
             await this._testRunDoneInQuarantineMode();
         else
             await this._emitTestRunDone();
     }
 
-    async _emitActionStart (args) {
+    async _emitActionStart(args) {
         await this.emit('test-action-start', args);
     }
 
-    async _emitActionDone (args) {
+    async _emitActionDone(args) {
         await this.emit('test-action-done', args);
     }
 
-    async _emitTestRunDone () {
+    async _emitTestRunDone() {
         // NOTE: we should report test run completion in order they were completed in browser.
         // To keep a sequence after fixture hook execution we use completion queue.
         await this.fixtureHookController.runFixtureAfterHookIfNecessary(this.testRun);
@@ -168,16 +173,16 @@ export default class TestRunController extends AsyncEventEmitter {
         await this.emit('test-run-done');
     }
 
-    async _emitTestRunStart () {
+    async _emitTestRunStart() {
         await this.emit('test-run-start');
     }
 
-    async _testRunBeforeDone () {
+    async _testRunBeforeDone() {
         let raiseEvent = !this.quarantine;
 
         if (!raiseEvent) {
             const isSuccessfulQuarantineFirstAttempt = this._isFirstQuarantineAttempt() && !this.testRun.errs.length;
-            const isAttemptsThresholdReached         = this.quarantine.isThresholdReached(this.testRun.errs);
+            const isAttemptsThresholdReached = this.quarantine.isThresholdReached(this.testRun.errs);
 
             raiseEvent = isSuccessfulQuarantineFirstAttempt || isAttemptsThresholdReached;
         }
@@ -186,7 +191,7 @@ export default class TestRunController extends AsyncEventEmitter {
             await this.emit('test-run-before-done');
     }
 
-    _testRunDisconnected (connection) {
+    _testRunDisconnected(connection) {
         this.disconnectionCount++;
 
         const disconnectionThresholdExceedeed = this.disconnectionCount >= DISCONNECT_THRESHOLD;
@@ -198,7 +203,7 @@ export default class TestRunController extends AsyncEventEmitter {
             });
     }
 
-    _assignTestRunEvents (testRun, connection) {
+    _assignTestRunEvents(testRun, connection) {
         testRun.on('action-start', async args => this._emitActionStart(Object.assign(args, { testRun })));
         testRun.on('action-done', async args => this._emitActionDone(Object.assign(args, { testRun })));
 
@@ -212,11 +217,11 @@ export default class TestRunController extends AsyncEventEmitter {
         testRun.once('disconnected', () => this._testRunDisconnected(connection));
     }
 
-    get blocked () {
+    get blocked() {
         return this.fixtureHookController.isTestBlocked(this.test);
     }
 
-    async start (connection) {
+    async start(connection) {
         const testRun = await this._createTestRun(connection);
 
         const hookOk = await this.fixtureHookController.runFixtureBeforeHookIfNecessary(testRun);
